@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shelf Tag Printer</title>
+<style>
+  :root { --bg:#f5f5f2; --panel:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#d9d9d3; --accent:#1f5f8b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  header { padding:16px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  header h1 { font-size:18px; margin:0 auto 0 0; }
+  main { padding:16px; max-width:1100px; margin:0 auto; }
+  .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; }
+  label.f { display:flex; flex-direction:column; font-size:12px; color:var(--muted); gap:4px; }
+  input, select, button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; }
+  .file { position:relative; overflow:hidden; }
+  .file input { position:absolute; inset:0; opacity:0; }
+  #status { color:var(--muted); font-size:13px; }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { padding:8px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; }
+  th { background:#eeeeea; font-size:12px; color:var(--muted); position:sticky; top:0; }
+  td.num, th.num { text-align:right; }
+  td input[type=number] { width:60px; padding:4px 6px; }
+  input[type=checkbox] { width:20px; height:20px; }
+  .empty { text-align:center; color:var(--muted); padding:40px; background:var(--panel); border:1px dashed var(--line); border-radius:10px; }
+  h2 { font-size:14px; color:var(--muted); margin:20px 0 8px; font-weight:600; }
+  #preview { display:flex; flex-wrap:wrap; gap:10px; }
+  #preview .label { box-shadow:0 0 0 1px var(--line); border-radius:3mm; background:#fff; }
+
+  /* ---- The tag itself: DK-1209 = 62mm x 29mm ---- */
+  .label { width:62mm; height:29mm; padding:1.6mm 2.4mm 1.2mm; overflow:hidden; font-family:"Helvetica Neue", Arial, sans-serif; color:#000; display:flex; flex-direction:column; }
+  .label .hdr { font-size:6.5pt; line-height:1.1; }
+  .label .row { display:flex; justify-content:space-between; align-items:baseline; line-height:1.05; }
+  .label .size { font-size:8pt; font-weight:700; }
+  .label .price { font-size:14pt; font-weight:700; }
+  .label .desc { font-size:7pt; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:clip; text-transform:uppercase; }
+  .label svg.bc { display:block; align-self:flex-start; height:8.5mm; width:auto; max-width:100%; margin-top:.4mm; }
+  .label .item { font-size:7pt; line-height:1.1; }
+  /* ---- Large: DK-1202 = 62mm x 100mm, portrait ---- */
+  .label.lg { width:62mm; height:100mm; padding:5mm 4.5mm 4mm; }
+  .label.lg .hdr { font-size:10pt; margin-bottom:3mm; }
+  .label.lg .row { flex-direction:column; align-items:flex-start; }
+  .label.lg .size { font-size:14pt; }
+  .label.lg .price { font-size:40pt; line-height:1; margin:2mm 0 3mm; }
+  .label.lg .desc { font-size:13pt; line-height:1.2; white-space:normal; max-height:3.6em; }
+  .label.lg svg.bc { height:18mm; width:auto; max-width:100%; margin-top:auto; }
+  .label.lg .item { font-size:12pt; margin-top:1mm; }
+
+  @media print {
+    html, body { background:#fff; margin:0; }
+    header, main { display:none !important; }
+    #printArea { display:block !important; }
+    #printArea .label { page-break-after:always; break-after:page; }
+    #printArea .label:last-child { page-break-after:auto; break-after:auto; }
+  }
+  #printArea { display:none; }
+</style>
+<style id="pageStyle">@media print { @page { size:62mm 29mm; margin:0; } }</style>
+</head>
+<body>
+<header>
+  <h1>Shelf Tag Printer</h1>
+  <span id="status">No file loaded</span>
+  <label class="file"><button class="primary" type="button">Open .xlsx / .csv</button><input id="file" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>
+</header>
+<main>
+  <div class="controls">
+    <label class="f">Label size
+      <select id="labelSize">
+        <option value="sm">1.1" x 2.4" (DK-1209)</option>
+        <option value="lg">2.4" x 3.9" (62 x 100 mm)</option>
+      </select>
+    </label>
+    <label class="f">Search<input id="q" type="search" placeholder="Item # or description"></label>
+    <label class="f">Price to print
+      <select id="priceMode">
+        <option value="retail">Retail Price</option>
+        <option value="sale">Sales Price</option>
+        <option value="best">Sales Price if set, else Retail</option>
+      </select>
+    </label>
+    <label class="f">Barcode
+      <select id="bcFormat">
+        <option value="CODE128">Code 128</option>
+        <option value="CODE39">Code 39</option>
+      </select>
+    </label>
+    <label class="f">Header text<input id="hdrText" value="Maine Spirits"></label>
+    <button id="selAll" type="button">Select shown</button>
+    <button id="selNone" type="button">Clear</button>
+    <button id="printBtn" class="primary" type="button" disabled>Print 0 tags</button>
+  </div>
+
+  <div id="tableWrap"><div class="empty">Open your item file to get started.</div></div>
+
+  <h2>Preview (first 12 selected)</h2>
+  <div id="preview"></div>
+</main>
+<div id="printArea"></div>
+
+<script>/*XLSX_LIB*/</script>
+<script>/*JSBARCODE_LIB*/</script>
+<script>
+(function(){
+  var rows = [];          // parsed items
+  var $ = function(id){ return document.getElementById(id); };
+
+  // Normalise a header: trim, strip quotes and periods, collapse spaces, lowercase.
+  function norm(h){ return String(h).replace(/['"]/g,'').replace(/\./g,'').replace(/\s+/g,' ').trim().toLowerCase(); }
+
+  function findKey(keys, name){
+    var n = norm(name);
+    for (var i=0;i<keys.length;i++) if (norm(keys[i]) === n) return keys[i];
+    return null;
+  }
+
+  function money(v){
+    if (v === null || v === undefined) return '';
+    var s = String(v).replace(/[$,\s]/g,'');
+    if (s === '') return '';
+    var n = parseFloat(s);
+    return isNaN(n) ? '' : n.toFixed(2);
+  }
+
+  function itemNo(v){
+    var s = String(v == null ? '' : v).trim().replace(/\.0+$/,'');
+    if (/^\d+$/.test(s) && s.length < 6) s = ('000000' + s).slice(-6);
+    return s;
+  }
+
+  function load(file){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      try {
+        var wb = XLSX.read(new Uint8Array(e.target.result), { type:'array', raw:false });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var data = XLSX.utils.sheet_to_json(ws, { defval:'', raw:false });
+        if (!data.length) throw new Error('No rows found.');
+        var keys = Object.keys(data[0]);
+        var k = {
+          item:   findKey(keys,'Item') ,
+          desc:   findKey(keys,'Description'),
+          size:   findKey(keys,'Size'),
+          uoi:    findKey(keys,'UOI'),
+          units:  findKey(keys,'Units'),
+          retail: findKey(keys,'Retail Price'),
+          sale:   findKey(keys,'Sales Price')
+        };
+        var missing = ['item','desc','size','retail'].filter(function(x){ return !k[x]; });
+        if (missing.length) throw new Error('Missing column(s): ' + missing.join(', ') + '. Found: ' + keys.join(' | '));
+        rows = data.map(function(r, i){
+          return {
+            id: i,
+            item: itemNo(r[k.item]),
+            desc: String(r[k.desc]).trim(),
+            size: String(r[k.size]).trim(),
+            uoi: k.uoi ? String(r[k.uoi]).trim() : '',
+            units: k.units ? String(r[k.units]).trim() : '',
+            retail: money(r[k.retail]),
+            sale: k.sale ? money(r[k.sale]) : '',
+            sel: false, qty: 1
+          };
+        }).filter(function(r){ return r.item; });
+        $('status').textContent = file.name + ' — ' + rows.length + ' items';
+        render();
+      } catch(err) {
+        $('status').textContent = 'Could not read file: ' + err.message;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function price(r){
+    var m = $('priceMode').value;
+    if (m === 'sale') return r.sale;
+    if (m === 'best') return r.sale && parseFloat(r.sale) > 0 ? r.sale : r.retail;
+    return r.retail;
+  }
+
+  function sizeLine(r){
+    var s = r.size;
+    if (r.uoi) s += ' ' + r.uoi + (r.units ? '/' + r.units : '');
+    return s;
+  }
+
+  function visible(){
+    var q = $('q').value.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1; });
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function render(){
+    var list = visible();
+    if (!rows.length) return;
+    var html = '<table><thead><tr><th></th><th>Item</th><th>Description</th><th>Size</th><th class="num">Price</th><th class="num">Copies</th></tr></thead><tbody>';
+    list.slice(0, 500).forEach(function(r){
+      html += '<tr><td><input type="checkbox" data-id="'+r.id+'" '+(r.sel?'checked':'')+'></td>'
+        + '<td>'+esc(r.item)+'</td><td>'+esc(r.desc)+'</td><td>'+esc(sizeLine(r))+'</td>'
+        + '<td class="num">'+esc(price(r))+'</td>'
+        + '<td class="num"><input type="number" min="1" max="99" value="'+r.qty+'" data-qty="'+r.id+'"></td></tr>';
+    });
+    html += '</tbody></table>';
+    if (list.length > 500) html += '<p class="empty">Showing 500 of ' + list.length + ' — use search to narrow.</p>';
+    $('tableWrap').innerHTML = html;
+    update();
+  }
+
+  function labelEl(r){
+    var d = document.createElement('div');
+    d.className = $('labelSize').value === 'lg' ? 'label lg' : 'label';
+    d.innerHTML = '<div class="hdr">'+esc($('hdrText').value)+'</div>'
+      + '<div class="row"><span class="size">'+esc(sizeLine(r))+'</span><span class="price">'+esc(price(r))+'</span></div>'
+      + '<div class="desc">'+esc(r.desc)+'</div>'
+      + '<svg class="bc"></svg>'
+      + '<div class="item">'+esc(r.item)+'</div>';
+    try {
+      JsBarcode(d.querySelector('svg'), r.item, { format:$('bcFormat').value, displayValue:false, margin:0, height:$('labelSize').value === 'lg' ? 80 : 40, width:2 });
+    } catch(e) { d.querySelector('svg').outerHTML = '<div class="item">[invalid barcode]</div>'; }
+    return d;
+  }
+
+  function selected(){
+    var out = [];
+    rows.forEach(function(r){ if (r.sel) for (var i=0;i<r.qty;i++) out.push(r); });
+    return out;
+  }
+
+  function update(){
+    var sel = selected();
+    $('printBtn').textContent = 'Print ' + sel.length + ' tag' + (sel.length===1?'':'s');
+    $('printBtn').disabled = !sel.length;
+    var p = $('preview'); p.innerHTML = '';
+    sel.slice(0,12).forEach(function(r){ p.appendChild(labelEl(r)); });
+    var pa = $('printArea'); pa.innerHTML = '';
+    sel.forEach(function(r){ pa.appendChild(labelEl(r)); });
+  }
+
+  $('file').addEventListener('change', function(e){ if (e.target.files[0]) load(e.target.files[0]); e.target.value=''; });
+  $('q').addEventListener('input', render);
+  ['priceMode','bcFormat'].forEach(function(id){ $(id).addEventListener('change', render); });
+  $('hdrText').addEventListener('input', update);
+  function applySize(){
+    var lg = $('labelSize').value === 'lg';
+    $('pageStyle').textContent = '@media print { @page { size:62mm ' + (lg ? '100mm' : '29mm') + '; margin:0; } }';
+    try { localStorage.setItem('labelSize', $('labelSize').value); } catch(e) {}
+    update();
+  }
+  try { var saved = localStorage.getItem('labelSize'); if (saved) $('labelSize').value = saved; } catch(e) {}
+  $('labelSize').addEventListener('change', applySize);
+  applySize();
+  $('tableWrap').addEventListener('change', function(e){
+    var t = e.target;
+    if (t.dataset.id !== undefined) { rows[t.dataset.id].sel = t.checked; update(); }
+    if (t.dataset.qty !== undefined) { rows[t.dataset.qty].qty = Math.max(1, Math.min(99, parseInt(t.value,10)||1)); update(); }
+  });
+  $('selAll').addEventListener('click', function(){ visible().forEach(function(r){ r.sel = true; }); render(); });
+  $('selNone').addEventListener('click', function(){ rows.forEach(function(r){ r.sel = false; }); render(); });
+  $('printBtn').addEventListener('click', function(){
+    update();
+    setTimeout(function(){ window.print(); }, 50);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "shelf-tag-printer",
+  "private": true,
+  "description": "Offline shelf tag generator for Brother QL printers",
+  "scripts": {
+    "build": "python3 build.py"
+  },
+  "dependencies": {
+    "jsbarcode": "^3.11.6",
+    "xlsx": "0.18.5"
+  }
+}
