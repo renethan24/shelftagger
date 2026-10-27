@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build shelf-tags.html: paste the two JS libraries into src/template.html.
+"""Build shelf-tags.html: paste the JS libraries into src/template.html.
 
 Usage:
     npm install          # once, fetches xlsx + jsbarcode into node_modules/
@@ -11,6 +11,7 @@ ROOT = Path(__file__).parent
 LIBS = {
     "/*XLSX_LIB*/": ROOT / "node_modules/xlsx/dist/xlsx.full.min.js",
     "/*JSBARCODE_LIB*/": ROOT / "node_modules/jsbarcode/dist/JsBarcode.all.min.js",
+    "/*ZXING_LIB*/": ROOT / "node_modules/@zxing/library/umd/index.min.js",
 }
 
 html = (ROOT / "src/template.html").read_text(encoding="utf-8")

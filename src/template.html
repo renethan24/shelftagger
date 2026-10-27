@@ -20,6 +20,8 @@
   .file { position:relative; overflow:hidden; }
   .file input { position:absolute; inset:0; opacity:0; }
   #status { color:var(--muted); font-size:13px; }
+  #scanMsg { font-size:14px; margin:-4px 0 12px; }
+  #scanMsg:empty { display:none; }
   table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
   th, td { padding:8px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; }
   th { background:#eeeeea; font-size:12px; color:var(--muted); position:sticky; top:0; }
@@ -75,7 +77,8 @@
         <option value="lg">2.4" x 3.9" (62 x 100 mm)</option>
       </select>
     </label>
-    <label class="f">Search<input id="q" type="search" placeholder="Item # or description"></label>
+    <label class="f">Search<input id="q" type="search" placeholder="Item #, UPC or description"></label>
+    <label class="file"><button id="scanBtn" type="button" disabled>Scan barcode</button><input id="scan" type="file" accept="image/*" capture="environment" disabled></label>
     <label class="f">Price to print
       <select id="priceMode">
         <option value="retail">Retail Price</option>
@@ -95,6 +98,7 @@
     <button id="printBtn" class="primary" type="button" disabled>Print 0 tags</button>
   </div>
 
+  <div id="scanMsg"></div>
   <div id="tableWrap"><div class="empty">Open your item file to get started.</div></div>
 
   <h2>Preview (first 12 selected)</h2>
@@ -104,6 +108,7 @@
 
 <script>/*XLSX_LIB*/</script>
 <script>/*JSBARCODE_LIB*/</script>
+<script>/*ZXING_LIB*/</script>
 <script>
 (function(){
   var rows = [];          // parsed items
@@ -132,6 +137,9 @@
     return s;
   }
 
+  // Barcode digits without leading zeros, so 082184202777 (scanned) matches 82184202777 (Excel).
+  function digits(v){ return String(v == null ? '' : v).trim().replace(/\.0+$/,'').replace(/\D/g,'').replace(/^0+/,''); }
+
   function load(file){
     var reader = new FileReader();
     reader.onload = function(e){
@@ -148,7 +156,8 @@
           uoi:    findKey(keys,'UOI'),
           units:  findKey(keys,'Units'),
           retail: findKey(keys,'Retail Price'),
-          sale:   findKey(keys,'Sales Price')
+          sale:   findKey(keys,'Sales Price'),
+          upc:    findKey(keys,'UPC')
         };
         var missing = ['item','desc','size','retail'].filter(function(x){ return !k[x]; });
         if (missing.length) throw new Error('Missing column(s): ' + missing.join(', ') + '. Found: ' + keys.join(' | '));
@@ -162,10 +171,12 @@
             units: k.units ? String(r[k.units]).trim() : '',
             retail: money(r[k.retail]),
             sale: k.sale ? money(r[k.sale]) : '',
+            upc: k.upc ? digits(r[k.upc]) : '',
             sel: false, qty: 1
           };
         }).filter(function(r){ return r.item; });
         $('status').textContent = file.name + ' — ' + rows.length + ' items';
+        $('scanBtn').disabled = $('scan').disabled = false;
         render();
       } catch(err) {
         $('status').textContent = 'Could not read file: ' + err.message;
@@ -190,7 +201,8 @@
   function visible(){
     var q = $('q').value.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1; });
+    var qd = digits(q);
+    return rows.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1 || (qd && r.upc.indexOf(qd) > -1); });
   }
 
   function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -259,6 +271,62 @@
     if (t.dataset.id !== undefined) { rows[t.dataset.id].sel = t.checked; update(); }
     if (t.dataset.qty !== undefined) { rows[t.dataset.qty].qty = Math.max(1, Math.min(99, parseInt(t.value,10)||1)); update(); }
   });
+  // ---- Scan: take a photo, decode it, add the matching item to the queue ----
+  function decodePhoto(file, done){
+    var img = new Image(), url = URL.createObjectURL(file);
+    img.onload = function(){
+      URL.revokeObjectURL(url);
+      // Scale down: full-size iPad photos are slow to decode and can exceed canvas limits.
+      var scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      var w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      var hints = new Map(), F = ZXing.BarcodeFormat;
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [F.UPC_A, F.UPC_E, F.EAN_13, F.EAN_8, F.CODE_128, F.CODE_39]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      var reader = new ZXing.MultiFormatReader();
+      reader.setHints(hints);
+      // Try the photo as taken, then turned 90 degrees in case the barcode is vertical.
+      for (var turn = 0; turn < 2; turn++) {
+        var c = document.createElement('canvas'), x = c.getContext('2d');
+        c.width = turn ? h : w; c.height = turn ? w : h;
+        if (turn) { x.translate(h, 0); x.rotate(Math.PI / 2); }
+        x.drawImage(img, 0, 0, w, h);
+        try {
+          return done(reader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c)))).getText());
+        } catch(e) {}
+      }
+      done(null);
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); done(null); };
+    img.src = url;
+  }
+
+  function addScanned(code){
+    var d = digits(code);
+    // A product UPC, or one of our own tags (6-digit item number).
+    var hits = rows.filter(function(r){ return (d && r.upc === d) || r.item === code; });
+    var msg = $('scanMsg');
+    if (!hits.length) { msg.textContent = 'Scanned ' + code + ' — no matching item in the file.'; return; }
+    if (hits.length > 1) {
+      $('q').value = code; render();
+      msg.textContent = 'Scanned ' + code + ' — ' + hits.length + ' items share this barcode. Tick the one you want.';
+      return;
+    }
+    var r = hits[0];
+    msg.textContent = (r.sel ? 'Already in queue: ' : 'Added: ') + r.item + ' ' + r.desc;
+    r.sel = true;
+    render();
+  }
+
+  $('scan').addEventListener('change', function(e){
+    var f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    $('scanMsg').textContent = 'Reading barcode…';
+    decodePhoto(f, function(code){
+      if (code) addScanned(code);
+      else $('scanMsg').textContent = 'No barcode found. Try again closer, with the barcode flat and in focus.';
+    });
+  });
+
   $('selAll').addEventListener('click', function(){ visible().forEach(function(r){ r.sel = true; }); render(); });
   $('selNone').addEventListener('click', function(){ rows.forEach(function(r){ r.sel = false; }); render(); });
   $('printBtn').addEventListener('click', function(){

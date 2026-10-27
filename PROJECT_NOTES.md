@@ -22,6 +22,8 @@ Print retail shelf tags for Maine Spirits items at Pine State Beverage, from an 
   - **Large:** 2.4" x 3.9" (DK-1202, 62 x 100 mm), portrait, one tag per label, same fields scaled up. Being used for test prints now.
 - Print area is kept filled on every selection change, so the browser's own Print menu works if `window.print()` doesn't fire in the viewer app.
 
+- Barcode scanning: **Scan barcode** opens the camera through a file input (`capture="environment"`), then ZXing decodes the photo in the page. Chosen over a live camera feed because `getUserMedia` needs a secure origin, which a local file or data: URL may not be. Matches the product UPC column (leading zeros ignored, since Excel drops them) or a 6-digit item number from one of our own tags. One match is ticked; several matches are shown via the search box.
+
 ## Status / next steps
 - Push to a new (empty) GitHub repository.
 - Test print on 62 x 100 mm labels from the iPad; check alignment and the open-in-Edge flow.
