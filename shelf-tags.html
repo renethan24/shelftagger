@@ -49,7 +49,7 @@
   .label.lg .size { font-size:14pt; }
   .label.lg .price { font-size:40pt; line-height:1; margin:2mm 0 3mm; }
   .label.lg .desc { font-size:13pt; line-height:1.2; white-space:normal; max-height:3.6em; }
-  .label.lg svg.bc { height:18mm; width:auto; max-width:100%; margin-top:auto; }
+  .label.lg svg.bc { height:18mm; width:42mm; max-width:100%; flex-shrink:0; margin-top:auto; }
   .label.lg .item { font-size:12pt; margin-top:1mm; }
 
   @media print {
@@ -94,6 +94,7 @@
       </select>
     </label>
     <label class="f">Header text<input id="hdrText" value="Maine Spirits"></label>
+    <button id="onlySel" type="button">Show selected</button>
     <button id="selAll" type="button">Select shown</button>
     <button id="selNone" type="button">Clear</button>
     <button id="printBtn" class="primary" type="button" disabled>Print 0 tags</button>
@@ -136,6 +137,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 <script>
 (function(){
   var rows = [];          // parsed items
+  var onlySel = false;    // "Show selected" filter
   var $ = function(id){ return document.getElementById(id); };
 
   // Normalise a header: trim, strip quotes and periods, collapse spaces, lowercase.
@@ -224,9 +226,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   function visible(){
     var q = $('q').value.trim().toLowerCase();
-    if (!q) return rows;
+    var list = onlySel ? rows.filter(function(r){ return r.sel; }) : rows;
+    if (!q) return list;
     var qd = digits(q);
-    return rows.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1 || (qd && r.upc.indexOf(qd) > -1); });
+    return list.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1 || (qd && r.upc.indexOf(qd) > -1); });
   }
 
   function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -258,6 +261,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     try {
       var bc = barcodeFor(r);
       JsBarcode(d.querySelector('svg'), bc.value, { format:bc.format, displayValue:false, margin:0, height:$('labelSize').value === 'lg' ? 80 : 40, width:2 });
+      // Large tag: stretch the barcode to a fixed box so its width never depends on the code type.
+      if ($('labelSize').value === 'lg') d.querySelector('svg').setAttribute('preserveAspectRatio', 'none');
     } catch(e) { d.querySelector('svg').outerHTML = '<div class="item">[invalid barcode]</div>'; }
     return d;
   }
@@ -320,23 +325,29 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var img = new Image(), url = URL.createObjectURL(file);
     img.onload = function(){
       URL.revokeObjectURL(url);
-      // Scale down: full-size iPad photos are slow to decode and can exceed canvas limits.
-      var scale = Math.min(1, 1600 / Math.max(img.width, img.height));
-      var w = Math.round(img.width * scale), h = Math.round(img.height * scale);
       var hints = new Map(), F = ZXing.BarcodeFormat;
       hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [F.UPC_A, F.UPC_E, F.EAN_13, F.EAN_8, F.CODE_128, F.CODE_39]);
       hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
       var reader = new ZXing.MultiFormatReader();
       reader.setHints(hints);
-      // Try the photo as taken, then turned 90 degrees in case the barcode is vertical.
-      for (var turn = 0; turn < 2; turn++) {
-        var c = document.createElement('canvas'), x = c.getContext('2d');
-        c.width = turn ? h : w; c.height = turn ? w : h;
-        if (turn) { x.translate(h, 0); x.rotate(Math.PI / 2); }
-        x.drawImage(img, 0, 0, w, h);
-        try {
-          return done(reader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c)))).getText());
-        } catch(e) {}
+      // Try the whole photo, then zoom into the middle (so the barcode needn't fill the frame),
+      // each as taken and turned 90 degrees in case the barcode is vertical.
+      var zooms = [1, 0.5, 0.3];
+      for (var z = 0; z < zooms.length; z++) {
+        var sw = img.width * zooms[z], sh = img.height * zooms[z];
+        var sx = (img.width - sw) / 2, sy = (img.height - sh) / 2;
+        // Scale down: full-size iPad photos are slow to decode and can exceed canvas limits.
+        var scale = Math.min(1, 1600 / Math.max(sw, sh));
+        var w = Math.round(sw * scale), h = Math.round(sh * scale);
+        for (var turn = 0; turn < 2; turn++) {
+          var c = document.createElement('canvas'), x = c.getContext('2d');
+          c.width = turn ? h : w; c.height = turn ? w : h;
+          if (turn) { x.translate(h, 0); x.rotate(Math.PI / 2); }
+          x.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+          try {
+            return done(reader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c)))).getText());
+          } catch(e) {}
+        }
       }
       done(null);
     };
@@ -372,6 +383,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   });
 
   $('selAll').addEventListener('click', function(){ visible().forEach(function(r){ r.sel = true; }); render(); });
+  $('onlySel').addEventListener('click', function(){
+    onlySel = !onlySel;
+    this.textContent = onlySel ? 'Show all' : 'Show selected';
+    render();
+  });
   $('selNone').addEventListener('click', function(){ rows.forEach(function(r){ r.sel = false; }); render(); });
   $('printBtn').addEventListener('click', function(){
     update();
