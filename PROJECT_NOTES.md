@@ -13,7 +13,7 @@ Print retail shelf tags for Maine Spirits items at Pine State Beverage, from an 
 ## Decisions so far
 - Input: .xlsx preferred, .csv also supported (SheetJS reads both). First sheet only.
 - Column headers come from the export exactly as listed in README.md. The period in `Item .` is intentional; the date headers include literal single quotes. Header matching is normalised (case, spaces, periods, quotes).
-- Barcode encodes the **6-digit item number**, not the UPC. Code 128 default, Code 39 toggle. Item numbers are left-padded to 6 digits because Excel strips the leading zero.
+- Barcode encodes the **6-digit item number** by default (Code 128, or Code 39). A **UPC (from file)** option prints the UPC column instead, as UPC-A or EAN-13 like the tags from the old program; items without a valid 12/13-digit UPC (about 9 of 6,282) fall back to the item number in Code 128. Item numbers are left-padded to 6 digits because Excel strips the leading zero.
 - Size line format: `Size UOI/Units` (e.g. `700ML BTL/1`), matching the sample tag.
 - Price default: Retail Price. Options for Sales Price, or Sales-if-set-else-Retail.
 - Header text default "Maine Spirits", editable.

@@ -50,5 +50,5 @@ Required: `Item .`, `Description`, `Size`, `Retail Price`.
 - Size line: `Size UOI/Units`, e.g. `700ML BTL/1`
 - Price: Retail, Sales, or Sales-if-set-else-Retail (selectable)
 - Description
-- Barcode of the item number (Code 128 default, Code 39 optional); item numbers are left-padded to 6 digits
+- Barcode of the item number (Code 128 default, Code 39 optional); item numbers are left-padded to 6 digits, or the UPC from the file (UPC-A / EAN-13)
 - Item number

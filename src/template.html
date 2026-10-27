@@ -90,6 +90,7 @@
       <select id="bcFormat">
         <option value="CODE128">Code 128</option>
         <option value="CODE39">Code 39</option>
+        <option value="UPC">UPC (from file)</option>
       </select>
     </label>
     <label class="f">Header text<input id="hdrText" value="Maine Spirits"></label>
@@ -232,9 +233,29 @@
       + '<svg class="bc"></svg>'
       + '<div class="item">'+esc(r.item)+'</div>';
     try {
-      JsBarcode(d.querySelector('svg'), r.item, { format:$('bcFormat').value, displayValue:false, margin:0, height:$('labelSize').value === 'lg' ? 80 : 40, width:2 });
+      var bc = barcodeFor(r);
+      JsBarcode(d.querySelector('svg'), bc.value, { format:bc.format, displayValue:false, margin:0, height:$('labelSize').value === 'lg' ? 80 : 40, width:2 });
     } catch(e) { d.querySelector('svg').outerHTML = '<div class="item">[invalid barcode]</div>'; }
     return d;
+  }
+
+  // Item # barcode, or the UPC from the file. Items with no usable UPC fall back to the item # in Code 128.
+  function barcodeFor(r){
+    var f = $('bcFormat').value;
+    if (f === 'UPC') {
+      var u = r.upc.length && r.upc.length <= 12 ? ('000000000000' + r.upc).slice(-12) : r.upc;
+      if (u.length === 12 && validUpc(u)) return { value:u, format:'UPC' };
+      if (u.length === 13 && validUpc(u)) return { value:u, format:'EAN13' };
+      f = 'CODE128';
+    }
+    return { value:r.item, format:f };
+  }
+
+  // GTIN check digit (works for UPC-A and EAN-13).
+  function validUpc(u){
+    var sum = 0;
+    for (var i = u.length - 2, w = 3; i >= 0; i--, w = 4 - w) sum += +u[i] * w;
+    return (10 - sum % 10) % 10 === +u[u.length - 1];
   }
 
   function selected(){
