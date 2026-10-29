@@ -9,6 +9,7 @@ Offline shelf tag generator for a Brother QL-810W, run from an iPad. Load an ite
 | `shelf-tags.html` | Ready-to-use build. This is the file that goes on the iPad. |
 | `src/template.html` | Editable source (UI, tag layout, logic). Edit this, not the build. |
 | `build.py` | Pastes the libraries into the template to produce `shelf-tags.html`. |
+| `shelf-tagger-simple.html` | Alternative with no third-party libraries: reads .csv only, no barcode scanning, barcodes drawn by a short commented encoder in the file. Edit it directly; no build step. |
 
 ## Build
 
