@@ -1,81 +1,168 @@
 <!doctype html>
+<!--
+  SHELF TAG PRINTER: source template
+  ==================================
+  This is the editable source. It is NOT the file that goes on the iPad.
+  build.py reads this file, pastes three JavaScript libraries into the
+  placeholder comments near the bottom (SheetJS, JsBarcode, ZXing), and
+  writes the result to shelf-tags.html, one self-contained file that
+  works with no internet and no server.
+
+  How the page is laid out (top to bottom):
+    1. <style>            Screen styles for the app, then the tag layout, then print rules.
+    2. <style id=pageStyle> The printed page size. JavaScript rewrites it when the label size changes.
+    3. <header>           Title, status text, and the "Open file" button.
+    4. <main>             Controls bar, scan message, item table, and the preview of tags.
+    5. #printArea         Hidden on screen. Holds every tag to print. Shown only when printing.
+    6. <script> x 3       The bundled libraries (filled in by build.py).
+    7. <script>           The app itself: load file, search, select, draw tags, scan, print.
+
+  How data flows:
+    file picked -> load() parses rows -> render() draws the table
+    -> ticking boxes sets row.sel -> update() rebuilds the preview and #printArea
+    -> Print calls window.print(), and the @media print rules hide everything except #printArea.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Makes the page use the iPad's real screen width instead of a zoomed-out desktop layout. -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shelf Tag Printer</title>
 <style>
+  /* ================================================================
+     PART 1: SCREEN STYLES (how the app looks on the iPad)
+     ================================================================ */
+
+  /* Colour palette as CSS variables, reused below with var(--name). */
   :root { --bg:#f5f5f2; --panel:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#d9d9d3; --accent:#1f5f8b; }
+  /* Width/height include padding and border, which makes mm sizes on the tags exact. */
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  /* Top bar. The title's margin-right:auto pushes the status and Open button to the right. */
   header { padding:16px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
   header h1 { font-size:18px; margin:0 auto 0 0; }
   main { padding:16px; max-width:1100px; margin:0 auto; }
+  /* The controls bar: a wrapping row of dropdowns and buttons, aligned on their bottom edges. */
   .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; }
+  /* label.f = a small grey caption stacked above its input. */
   label.f { display:flex; flex-direction:column; font-size:12px; color:var(--muted); gap:4px; }
+  /* Large, touch-friendly form controls. font:inherit stops iOS shrinking their text. */
   input, select, button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
   button { cursor:pointer; }
   button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
   button:disabled { opacity:.5; }
+  /* File-picker trick: a real <input type=file> is laid invisibly over a nice-looking button.
+     The user sees the button, but their tap lands on the file input. Used by "Open" and "Scan". */
   .file { position:relative; overflow:hidden; }
   .file input { position:absolute; inset:0; opacity:0; }
   #status { color:var(--muted); font-size:13px; }
+  /* The scan result line. Hidden while it has no text. */
+  #scanMsg { font-size:14px; margin:-4px 0 12px; }
+  #scanMsg:empty { display:none; }
+  /* Item table. The header row sticks to the top while scrolling. */
   table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
   th, td { padding:8px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; }
   th { background:#eeeeea; font-size:12px; color:var(--muted); position:sticky; top:0; }
   td.num, th.num { text-align:right; }
   td input[type=number] { width:60px; padding:4px 6px; }
+  /* Bigger checkboxes for fingers. */
   input[type=checkbox] { width:20px; height:20px; }
   .empty { text-align:center; color:var(--muted); padding:40px; background:var(--panel); border:1px dashed var(--line); border-radius:10px; }
   h2 { font-size:14px; color:var(--muted); margin:20px 0 8px; font-weight:600; }
+  /* On-screen preview: tags in a wrapping grid, with a thin outline standing in for the label edge. */
   #preview { display:flex; flex-wrap:wrap; gap:10px; }
   #preview .label { box-shadow:0 0 0 1px var(--line); border-radius:3mm; background:#fff; }
 
+  /* ================================================================
+     PART 2: THE TAG LAYOUT
+     Sized in real-world units (mm, pt) so a tag prints at its true
+     size. The same .label element is used for the preview and the print.
+     Each tag stacks top to bottom (flex column):
+       .hdr   header text ("Maine Spirits")
+       .row   size line on the left, price on the right
+       .desc  product description
+       svg.bc the barcode
+       .item  item number
+     ================================================================ */
+
   /* ---- The tag itself: DK-1209 = 62mm x 29mm ---- */
+  /* overflow:hidden clips anything too long so it can never spill onto the next label. */
   .label { width:62mm; height:29mm; padding:1.6mm 2.4mm 1.2mm; overflow:hidden; font-family:"Helvetica Neue", Arial, sans-serif; color:#000; display:flex; flex-direction:column; }
   .label .hdr { font-size:6.5pt; line-height:1.1; }
+  /* space-between puts the size at the left edge and the price at the right edge. */
   .label .row { display:flex; justify-content:space-between; align-items:baseline; line-height:1.05; }
   .label .size { font-size:8pt; font-weight:700; }
   .label .price { font-size:14pt; font-weight:700; }
+  /* One line only on the small tag: long descriptions are cut off rather than wrapped. */
   .label .desc { font-size:7pt; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:clip; text-transform:uppercase; }
+  /* Barcode height is fixed in mm; width follows from the code's length (width:auto). */
   .label svg.bc { display:block; align-self:flex-start; height:8.5mm; width:auto; max-width:100%; margin-top:.4mm; }
   .label .item { font-size:7pt; line-height:1.1; }
   /* ---- Large: DK-1202 = 62mm x 100mm, portrait ---- */
+  /* Adding the class "lg" overrides only what changes: bigger box, bigger text,
+     size and price stacked instead of side by side. */
   .label.lg { width:62mm; height:100mm; padding:5mm 4.5mm 4mm; }
   .label.lg .hdr { font-size:10pt; margin-bottom:3mm; }
   .label.lg .row { flex-direction:column; align-items:flex-start; }
   .label.lg .size { font-size:14pt; }
   .label.lg .price { font-size:40pt; line-height:1; margin:2mm 0 3mm; }
+  /* Description may wrap here, up to about three lines. */
   .label.lg .desc { font-size:13pt; line-height:1.2; white-space:normal; max-height:3.6em; }
-  .label.lg svg.bc { height:18mm; width:auto; max-width:100%; margin-top:auto; }
+  /* margin-top:auto pushes the barcode (and the item number after it) to the bottom of the tag.
+     Fixed width and height, so every barcode type fills the same box. */
+  .label.lg svg.bc { height:18mm; width:42mm; max-width:100%; flex-shrink:0; margin-top:auto; }
   .label.lg .item { font-size:12pt; margin-top:1mm; }
 
+  /* ================================================================
+     PART 3: PRINT RULES
+     When printing, hide the whole app and show only #printArea.
+     Each tag gets its own page, and each page is one label.
+     ================================================================ */
   @media print {
     html, body { background:#fff; margin:0; }
     header, main { display:none !important; }
     #printArea { display:block !important; }
+    /* Start a new page (label) after every tag, except the last one, to avoid a blank label at the end.
+       Both the old (page-break-*) and new (break-*) spellings are given for older browsers. */
     #printArea .label { page-break-after:always; break-after:page; }
     #printArea .label:last-child { page-break-after:auto; break-after:auto; }
   }
+  /* On screen, the print area stays hidden. */
   #printArea { display:none; }
 </style>
+<!-- The printed page size. One page = one label, with no margins.
+     This default is the small label. applySize() in the script below replaces the
+     text of this tag with 62mm x 100mm when the large label is chosen. Keeping it in a
+     separate <style> with an id makes it easy to swap. -->
 <style id="pageStyle">@media print { @page { size:62mm 29mm; margin:0; } }</style>
 </head>
 <body>
+<!-- ================= HEADER: title, status, open file ================= -->
 <header>
   <h1>Shelf Tag Printer</h1>
+  <!-- Filled in by the script: file name and item count, or an error message. -->
   <span id="status">No file loaded</span>
+  <!-- "accept" limits the picker to spreadsheets. The input sits invisibly over the button (see .file in the CSS). -->
   <label class="file"><button class="primary" type="button">Open .xlsx / .csv</button><input id="file" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>
 </header>
 <main>
+  <!-- ================= CONTROLS BAR =================
+       Every control has an id so the script can read it with $('id'). -->
   <div class="controls">
+    <!-- Picks the tag layout and the printed page size. Remembered between visits. -->
     <label class="f">Label size
       <select id="labelSize">
         <option value="sm">1.1" x 2.4" (DK-1209)</option>
         <option value="lg">2.4" x 3.9" (62 x 100 mm)</option>
       </select>
     </label>
-    <label class="f">Search<input id="q" type="search" placeholder="Item # or description"></label>
+    <!-- Filters the table as you type. -->
+    <label class="f">Search<input id="q" type="search" placeholder="Item #, UPC or description"></label>
+    <!-- Scan: a file input with capture="environment" opens the iPad's back camera to take one photo.
+         A photo is used instead of a live video feed because live camera access needs a secure
+         (https) page, and a local file may not count as one. Disabled until a file is loaded. -->
+    <label class="file"><button id="scanBtn" type="button" disabled>Scan barcode</button><input id="scan" type="file" accept="image/*" capture="environment" disabled></label>
+    <!-- Which price column goes on the tag. -->
     <label class="f">Price to print
       <select id="priceMode">
         <option value="retail">Retail Price</option>
@@ -83,41 +170,81 @@
         <option value="best">Sales Price if set, else Retail</option>
       </select>
     </label>
+    <!-- Barcode type. The values match JsBarcode format names, except "UPC", which the script
+         turns into UPC-A or EAN-13 depending on the code in the file. -->
     <label class="f">Barcode
       <select id="bcFormat">
         <option value="CODE128">Code 128</option>
         <option value="CODE39">Code 39</option>
+        <option value="UPC">UPC (from file)</option>
       </select>
     </label>
+    <!-- Top line of every tag. -->
     <label class="f">Header text<input id="hdrText" value="Maine Spirits"></label>
+    <!-- Toggles the table between all items and only the ticked ones. -->
+    <button id="onlySel" type="button">Show selected</button>
+    <!-- Ticks every row currently shown (after search). -->
     <button id="selAll" type="button">Select shown</button>
+    <!-- Unticks everything. -->
     <button id="selNone" type="button">Clear</button>
+    <!-- Label updates live with the number of tags queued (copies included). -->
     <button id="printBtn" class="primary" type="button" disabled>Print 0 tags</button>
   </div>
 
+  <!-- Result of the last barcode scan. -->
+  <div id="scanMsg"></div>
+  <!-- The item table is generated by render() and placed in here. -->
   <div id="tableWrap"><div class="empty">Open your item file to get started.</div></div>
 
+  <!-- Preview: the first 12 queued tags, drawn exactly as they will print. -->
   <h2>Preview (first 12 selected)</h2>
   <div id="preview"></div>
 </main>
+<!-- Every queued tag, one per copy. Hidden on screen; it is the only thing visible when printing.
+     It is kept filled at all times (not just when Print is tapped), so the browser's own
+     Share > Print menu also works if the Print button doesn't open the print dialog. -->
 <div id="printArea"></div>
 
+<!-- ================= BUNDLED LIBRARIES =================
+     Each script below holds a placeholder comment that build.py replaces with a whole library,
+     so the finished page needs no internet:
+       1. SheetJS (xlsx)   reads .xlsx and .csv files. Gives the global XLSX.
+       2. JsBarcode        draws barcodes as SVG.      Gives the global JsBarcode.
+       3. ZXing            reads barcodes from images. Gives the global ZXing. -->
 <script>/*XLSX_LIB*/</script>
 <script>/*JSBARCODE_LIB*/</script>
+<script>/*ZXING_LIB*/</script>
+<!-- ================= THE APP ================= -->
 <script>
+// Everything is wrapped in a function that runs immediately, so the app's variables
+// stay private and can't clash with the libraries' globals.
 (function(){
+  // ---- App state ----
+  // rows: one object per item in the file:
+  //   { id, item, desc, size, uoi, units, retail, sale, upc, sel (ticked?), qty (copies) }
+  // id is the row's position in this array, which lets the table's checkboxes find their row quickly.
   var rows = [];          // parsed items
+  var onlySel = false;    // "Show selected" filter
+  // Shorthand: $('q') instead of document.getElementById('q').
   var $ = function(id){ return document.getElementById(id); };
 
+  // ================================================================
+  // HELPERS: clean up values from the spreadsheet
+  // ================================================================
+
   // Normalise a header: trim, strip quotes and periods, collapse spaces, lowercase.
+  // e.g. "Item ." -> "item", "'Effective Start Date'" -> "effective start date".
   function norm(h){ return String(h).replace(/['"]/g,'').replace(/\./g,'').replace(/\s+/g,' ').trim().toLowerCase(); }
 
+  // Find the file's actual column header that matches a name we expect, ignoring the
+  // differences norm() removes. Returns the header exactly as written in the file, or null.
   function findKey(keys, name){
     var n = norm(name);
     for (var i=0;i<keys.length;i++) if (norm(keys[i]) === n) return keys[i];
     return null;
   }
 
+  // Turn a price cell ("$1,234.5", "19.99", "") into "1234.50", or "" if it isn't a number.
   function money(v){
     if (v === null || v === undefined) return '';
     var s = String(v).replace(/[$,\s]/g,'');
@@ -126,20 +253,35 @@
     return isNaN(n) ? '' : n.toFixed(2);
   }
 
+  // Item numbers are 6 digits, but Excel drops leading zeros (012345 becomes 12345)
+  // and may add ".0". This strips the ".0" and pads back to 6 digits.
   function itemNo(v){
     var s = String(v == null ? '' : v).trim().replace(/\.0+$/,'');
     if (/^\d+$/.test(s) && s.length < 6) s = ('000000' + s).slice(-6);
     return s;
   }
 
+  // Barcode digits without leading zeros, so 082184202777 (scanned) matches 82184202777 (Excel).
+  function digits(v){ return String(v == null ? '' : v).trim().replace(/\.0+$/,'').replace(/\D/g,'').replace(/^0+/,''); }
+
+  // ================================================================
+  // LOADING THE FILE
+  // ================================================================
+
+  // Reads the chosen file into memory (nothing is uploaded anywhere), parses the first
+  // sheet with SheetJS, matches the columns, and builds the rows array.
   function load(file){
     var reader = new FileReader();
+    // onload runs once the browser has finished reading the file's bytes.
     reader.onload = function(e){
       try {
+        // SheetJS detects .xlsx vs .csv by itself. raw:false gives cell values as shown in Excel (text).
         var wb = XLSX.read(new Uint8Array(e.target.result), { type:'array', raw:false });
         var ws = wb.Sheets[wb.SheetNames[0]];
+        // One object per spreadsheet row, keyed by the header row. defval:'' fills empty cells.
         var data = XLSX.utils.sheet_to_json(ws, { defval:'', raw:false });
         if (!data.length) throw new Error('No rows found.');
+        // Map each field we need to the file's real header name.
         var keys = Object.keys(data[0]);
         var k = {
           item:   findKey(keys,'Item') ,
@@ -148,10 +290,14 @@
           uoi:    findKey(keys,'UOI'),
           units:  findKey(keys,'Units'),
           retail: findKey(keys,'Retail Price'),
-          sale:   findKey(keys,'Sales Price')
+          sale:   findKey(keys,'Sales Price'),
+          upc:    findKey(keys,'UPC')
         };
+        // These four are essential. The rest are optional and simply left blank if missing.
         var missing = ['item','desc','size','retail'].filter(function(x){ return !k[x]; });
         if (missing.length) throw new Error('Missing column(s): ' + missing.join(', ') + '. Found: ' + keys.join(' | '));
+        // Convert each spreadsheet row into a clean item object. Rows with no item number
+        // (blank lines, totals) are dropped by the filter at the end.
         rows = data.map(function(r, i){
           return {
             id: i,
@@ -162,10 +308,13 @@
             units: k.units ? String(r[k.units]).trim() : '',
             retail: money(r[k.retail]),
             sale: k.sale ? money(r[k.sale]) : '',
+            upc: k.upc ? digits(r[k.upc]) : '',
             sel: false, qty: 1
           };
         }).filter(function(r){ return r.item; });
         $('status').textContent = file.name + ' — ' + rows.length + ' items';
+        // Scanning only makes sense once there are items to match against.
+        $('scanBtn').disabled = $('scan').disabled = false;
         render();
       } catch(err) {
         $('status').textContent = 'Could not read file: ' + err.message;
@@ -174,6 +323,11 @@
     reader.readAsArrayBuffer(file);
   }
 
+  // ================================================================
+  // WHAT GOES ON A TAG
+  // ================================================================
+
+  // The price to print, depending on the "Price to print" dropdown.
   function price(r){
     var m = $('priceMode').value;
     if (m === 'sale') return r.sale;
@@ -181,24 +335,40 @@
     return r.retail;
   }
 
+  // The size line, e.g. "700ML" + "BTL" + "1" -> "700ML BTL/1".
   function sizeLine(r){
     var s = r.size;
     if (r.uoi) s += ' ' + r.uoi + (r.units ? '/' + r.units : '');
     return s;
   }
 
+  // ================================================================
+  // SEARCH AND THE ITEM TABLE
+  // ================================================================
+
+  // The rows to show in the table: optionally only ticked ones, then filtered by the search box.
+  // A row matches if the search text is in its item number or description, or if the search's
+  // digits are in its UPC (leading zeros ignored, see digits()).
   function visible(){
     var q = $('q').value.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1; });
+    var list = onlySel ? rows.filter(function(r){ return r.sel; }) : rows;
+    if (!q) return list;
+    var qd = digits(q);
+    return list.filter(function(r){ return r.item.indexOf(q) > -1 || r.desc.toLowerCase().indexOf(q) > -1 || (qd && r.upc.indexOf(qd) > -1); });
   }
 
+  // Escape text before putting it into HTML, so a description containing < or & displays
+  // as text instead of breaking the page.
   function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 
+  // Rebuild the item table from scratch as one HTML string (fast, even for thousands of rows).
+  // Each checkbox carries data-id and each copies box carries data-qty, both set to the row's
+  // id, so one listener on the table (further down) can tell which row was changed.
   function render(){
     var list = visible();
     if (!rows.length) return;
     var html = '<table><thead><tr><th></th><th>Item</th><th>Description</th><th>Size</th><th class="num">Price</th><th class="num">Copies</th></tr></thead><tbody>';
+    // Cap at 500 rows: drawing all ~6,000 at once makes the iPad sluggish.
     list.slice(0, 500).forEach(function(r){
       html += '<tr><td><input type="checkbox" data-id="'+r.id+'" '+(r.sel?'checked':'')+'></td>'
         + '<td>'+esc(r.item)+'</td><td>'+esc(r.desc)+'</td><td>'+esc(sizeLine(r))+'</td>'
@@ -211,6 +381,12 @@
     update();
   }
 
+  // ================================================================
+  // DRAWING ONE TAG
+  // ================================================================
+
+  // Builds one tag as a <div class="label"> (or "label lg" for the large size) using the
+  // layout from PART 2 of the CSS, then draws the barcode into its <svg>.
   function labelEl(r){
     var d = document.createElement('div');
     d.className = $('labelSize').value === 'lg' ? 'label lg' : 'label';
@@ -220,17 +396,59 @@
       + '<svg class="bc"></svg>'
       + '<div class="item">'+esc(r.item)+'</div>';
     try {
-      JsBarcode(d.querySelector('svg'), r.item, { format:$('bcFormat').value, displayValue:false, margin:0, height:$('labelSize').value === 'lg' ? 80 : 40, width:2 });
+      var bc = barcodeFor(r);
+      // JsBarcode fills the <svg> with bars. displayValue:false hides its own text (the
+      // item number is printed separately below). width is the thinnest bar in SVG units;
+      // the CSS then scales the whole SVG to the tag's mm size.
+      JsBarcode(d.querySelector('svg'), bc.value, { format:bc.format, displayValue:false, margin:0, height:$('labelSize').value === 'lg' ? 80 : 40, width:2 });
+      // Large tag: stretch the barcode to a fixed box so its width never depends on the code type.
+      if ($('labelSize').value === 'lg') d.querySelector('svg').setAttribute('preserveAspectRatio', 'none');
+    // If the value can't be encoded in the chosen format (e.g. Code 39 with odd characters),
+    // JsBarcode throws, and the tag shows a note instead of a barcode.
     } catch(e) { d.querySelector('svg').outerHTML = '<div class="item">[invalid barcode]</div>'; }
     return d;
   }
 
+  // ================================================================
+  // BARCODES
+  // ================================================================
+
+  // Item # barcode, or the UPC from the file. Items with no usable UPC fall back to the item # in Code 128.
+  // UPC-A is 12 digits and EAN-13 is 13. Because digits() removed leading zeros, short UPCs are
+  // padded back to 12 first. The check digit is verified so a mistyped UPC isn't printed.
+  function barcodeFor(r){
+    var f = $('bcFormat').value;
+    if (f === 'UPC') {
+      var u = r.upc.length && r.upc.length <= 12 ? ('000000000000' + r.upc).slice(-12) : r.upc;
+      if (u.length === 12 && validUpc(u)) return { value:u, format:'UPC' };
+      if (u.length === 13 && validUpc(u)) return { value:u, format:'EAN13' };
+      f = 'CODE128';
+    }
+    return { value:r.item, format:f };
+  }
+
+  // GTIN check digit (works for UPC-A and EAN-13).
+  // Working right to left from the digit before the check digit, multiply digits alternately
+  // by 3 and 1 and add them up. The check digit is whatever brings the total to a multiple of 10.
+  function validUpc(u){
+    var sum = 0;
+    for (var i = u.length - 2, w = 3; i >= 0; i--, w = 4 - w) sum += +u[i] * w;
+    return (10 - sum % 10) % 10 === +u[u.length - 1];
+  }
+
+  // ================================================================
+  // THE PRINT QUEUE
+  // ================================================================
+
+  // The queue: every ticked row, repeated once per copy, in file order.
   function selected(){
     var out = [];
     rows.forEach(function(r){ if (r.sel) for (var i=0;i<r.qty;i++) out.push(r); });
     return out;
   }
 
+  // Called after anything that changes the queue or how tags look. Refreshes the Print
+  // button's count, the on-screen preview (first 12 tags), and the hidden print area (all tags).
   function update(){
     var sel = selected();
     $('printBtn').textContent = 'Print ' + sel.length + ' tag' + (sel.length===1?'':'s');
@@ -241,26 +459,124 @@
     sel.forEach(function(r){ pa.appendChild(labelEl(r)); });
   }
 
+  // ================================================================
+  // WIRING: connect the controls to the functions above
+  // ================================================================
+
+  // Open file. Clearing the input's value afterwards lets the same file be picked again.
   $('file').addEventListener('change', function(e){ if (e.target.files[0]) load(e.target.files[0]); e.target.value=''; });
+  // Search re-filters the table on every keystroke.
   $('q').addEventListener('input', render);
+  // Price and barcode choices change the table's price column and the tags, so redraw both.
   ['priceMode','bcFormat'].forEach(function(id){ $(id).addEventListener('change', render); });
+  // Header text only appears on the tags, so only the tags need redrawing.
   $('hdrText').addEventListener('input', update);
+  // Label size: swap the printed page size (the #pageStyle tag), remember the choice
+  // on this device, and redraw the tags at the new size.
   function applySize(){
     var lg = $('labelSize').value === 'lg';
     $('pageStyle').textContent = '@media print { @page { size:62mm ' + (lg ? '100mm' : '29mm') + '; margin:0; } }';
+    // try/catch: some ways of opening the file block storage, and that shouldn't stop the app.
     try { localStorage.setItem('labelSize', $('labelSize').value); } catch(e) {}
     update();
   }
+  // On start-up, restore the last label size used, then apply it.
   try { var saved = localStorage.getItem('labelSize'); if (saved) $('labelSize').value = saved; } catch(e) {}
   $('labelSize').addEventListener('change', applySize);
   applySize();
+  // One listener for the whole table ("event delegation"). The table is rebuilt often, so this
+  // avoids attaching a listener to every checkbox. data-id = a checkbox, data-qty = a copies box.
+  // Copies are kept between 1 and 99.
   $('tableWrap').addEventListener('change', function(e){
     var t = e.target;
     if (t.dataset.id !== undefined) { rows[t.dataset.id].sel = t.checked; update(); }
     if (t.dataset.qty !== undefined) { rows[t.dataset.qty].qty = Math.max(1, Math.min(99, parseInt(t.value,10)||1)); update(); }
   });
+  // ---- Scan: take a photo, decode it, add the matching item to the queue ----
+  // decodePhoto loads the photo, draws it onto a <canvas>, and asks ZXing to find a barcode.
+  // It calls done(text) with the barcode's contents, or done(null) if nothing was found.
+  function decodePhoto(file, done){
+    var img = new Image(), url = URL.createObjectURL(file);
+    img.onload = function(){
+      URL.revokeObjectURL(url);
+      // Tell ZXing which barcode types to look for (product UPC/EAN codes and our own tag codes),
+      // and to try harder at the cost of speed.
+      var hints = new Map(), F = ZXing.BarcodeFormat;
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [F.UPC_A, F.UPC_E, F.EAN_13, F.EAN_8, F.CODE_128, F.CODE_39]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      var reader = new ZXing.MultiFormatReader();
+      reader.setHints(hints);
+      // Try the whole photo, then zoom into the middle (so the barcode needn't fill the frame),
+      // each as taken and turned 90 degrees in case the barcode is vertical.
+      var zooms = [1, 0.5, 0.3];
+      for (var z = 0; z < zooms.length; z++) {
+        // sx, sy, sw, sh: the centred part of the photo to use at this zoom.
+        var sw = img.width * zooms[z], sh = img.height * zooms[z];
+        var sx = (img.width - sw) / 2, sy = (img.height - sh) / 2;
+        // Scale down: full-size iPad photos are slow to decode and can exceed canvas limits.
+        var scale = Math.min(1, 1600 / Math.max(sw, sh));
+        var w = Math.round(sw * scale), h = Math.round(sh * scale);
+        for (var turn = 0; turn < 2; turn++) {
+          // On the second pass, swap the canvas's width and height and rotate the drawing 90 degrees.
+          var c = document.createElement('canvas'), x = c.getContext('2d');
+          c.width = turn ? h : w; c.height = turn ? w : h;
+          if (turn) { x.translate(h, 0); x.rotate(Math.PI / 2); }
+          x.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+          // ZXing pipeline: canvas pixels -> brightness values -> black/white bitmap -> decode.
+          // decode() throws when it finds nothing, so a throw just means "try the next view".
+          try {
+            return done(reader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c)))).getText());
+          } catch(e) {}
+        }
+      }
+      done(null);
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); done(null); };
+    img.src = url;
+  }
+
+  // Find the item matching a scanned code and tick it.
+  function addScanned(code){
+    var d = digits(code);
+    // A product UPC, or one of our own tags (6-digit item number).
+    var hits = rows.filter(function(r){ return (d && r.upc === d) || r.item === code; });
+    var msg = $('scanMsg');
+    if (!hits.length) { msg.textContent = 'Scanned ' + code + ' — no matching item in the file.'; return; }
+    // Several items can share one UPC (e.g. different pack sizes). Show them all via the
+    // search box and let the user tick the right one.
+    if (hits.length > 1) {
+      $('q').value = code; render();
+      msg.textContent = 'Scanned ' + code + ' — ' + hits.length + ' items share this barcode. Tick the one you want.';
+      return;
+    }
+    var r = hits[0];
+    msg.textContent = (r.sel ? 'Already in queue: ' : 'Added: ') + r.item + ' ' + r.desc;
+    r.sel = true;
+    render();
+  }
+
+  // When a photo comes back from the camera, decode it and look up the item.
+  $('scan').addEventListener('change', function(e){
+    var f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    $('scanMsg').textContent = 'Reading barcode…';
+    decodePhoto(f, function(code){
+      if (code) addScanned(code);
+      else $('scanMsg').textContent = 'No barcode found. Try again closer, with the barcode flat and in focus.';
+    });
+  });
+
+  // ---- Selection buttons ----
   $('selAll').addEventListener('click', function(){ visible().forEach(function(r){ r.sel = true; }); render(); });
+  $('onlySel').addEventListener('click', function(){
+    onlySel = !onlySel;
+    this.textContent = onlySel ? 'Show all' : 'Show selected';
+    render();
+  });
   $('selNone').addEventListener('click', function(){ rows.forEach(function(r){ r.sel = false; }); render(); });
+  // ---- Print ----
+  // Refresh the print area, then open the print dialog. The short delay gives the browser a
+  // moment to lay out the new tags first. The @media print CSS takes care of the rest.
   $('printBtn').addEventListener('click', function(){
     update();
     setTimeout(function(){ window.print(); }, 50);

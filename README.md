@@ -17,7 +17,7 @@ npm install
 python3 build.py
 ```
 
-Libraries: [SheetJS](https://sheetjs.com) 0.18.5 (reads .xlsx/.csv) and [JsBarcode](https://github.com/lindell/JsBarcode) (draws barcodes).
+Libraries: [SheetJS](https://sheetjs.com) 0.18.5 (reads .xlsx/.csv), [JsBarcode](https://github.com/lindell/JsBarcode) (draws barcodes) and [ZXing](https://github.com/zxing-js/library) 0.21.3 (reads barcodes from photos).
 
 ## Using it on the iPad
 
@@ -25,7 +25,7 @@ Safari won't run JavaScript in a local file, so open it in an app that will:
 
 1. Copy `shelf-tags.html` to the iPad's Files app.
 2. Long-press it → Share → **Microsoft Edge** (or open it in an app like HTML Serve).
-3. Open your item file, tick items, set copies, tap **Print**. If the button does nothing, use the app's own Share → Print.
+3. Open your item file, tick items (or tap **Scan barcode** and photograph a product UPC or an existing shelf tag), set copies, tap **Print**. If the button does nothing, use the app's own Share → Print.
 
 ## Print settings
 
@@ -50,5 +50,5 @@ Required: `Item .`, `Description`, `Size`, `Retail Price`.
 - Size line: `Size UOI/Units`, e.g. `700ML BTL/1`
 - Price: Retail, Sales, or Sales-if-set-else-Retail (selectable)
 - Description
-- Barcode of the item number (Code 128 default, Code 39 optional); item numbers are left-padded to 6 digits
+- Barcode of the item number (Code 128 default, Code 39 optional); item numbers are left-padded to 6 digits, or the UPC from the file (UPC-A / EAN-13)
 - Item number

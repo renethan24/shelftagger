@@ -6,6 +6,7 @@
     "build": "python3 build.py"
   },
   "dependencies": {
+    "@zxing/library": "0.21.3",
     "jsbarcode": "^3.11.6",
     "xlsx": "0.18.5"
   }
